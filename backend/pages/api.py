@@ -10,7 +10,7 @@ from backend import settings
 from categories.models import Category
 from dissertations.api import SlugDisplayNameSchema
 from ediauth import auth_check
-from pages.models import Page, PageAuthor, PageParent, PageRevision
+from pages.models import Page, PageAuthor, PageRevision
 from util.response import ErrorSchema, not_allowed, not_possible
 
 router = Router(tags=["Pages"])
@@ -26,8 +26,8 @@ class PageResponse(Schema):
     title: str
     slug: str
     kind: Page.Kind
-    category: SlugDisplayNameSchema | None
-    parents: list[str]
+    categories: list[SlugDisplayNameSchema]
+    parent: str | None
     created_at: datetime.datetime
     edited_at: datetime.datetime
     content: str
@@ -39,8 +39,8 @@ class PageListResponseItem(Schema):
     title: str
     slug: str
     kind: Page.Kind
-    category: SlugDisplayNameSchema | None
-    parents: list[str]
+    categories: list[SlugDisplayNameSchema]
+    parent: str | None
     created_at: datetime.datetime
     edited_at: datetime.datetime
 
@@ -143,19 +143,18 @@ def list_pages(
 
     if child_of and child_of != "":
         parent_page = get_object_or_404(Page, slug=child_of)
-        query = query.filter(parents=parent_page)
+        query = query.filter(parent=parent_page)
     elif child_of == "":
-        query = query.filter(parents=None)
+        query = query.filter(parent=None)
 
     if category and category != "":
         category_obj = get_object_or_404(Category, slug=category)
-        query = query.filter(category=category_obj)
+        query = query.filter(categories=category_obj)
     elif category == "":
-        query = query.filter(category=None)
+        query = query.filter(categories=None)
 
     pages = (
-        query.select_related("author", "category")
-        .prefetch_related("parents")
+        query.select_related("author", "parent", "categories")
         .order_by("title")
     )
 
@@ -166,12 +165,11 @@ def list_pages(
                 "title": page.title,
                 "slug": page.slug,
                 "kind": page.kind,
-                "category": SlugDisplayNameSchema(
-                    slug=page.category.slug, displayname=page.category.displayname
-                )
-                if page.category
-                else None,
-                "parents": [parent.slug for parent in page.parents.all()],
+                "categories": [
+                    SlugDisplayNameSchema(slug=cat.slug, displayname=cat.displayname)
+                    for cat in page.categories.all()
+                ],
+                "parent": page.parent.slug if page.parent else None,
                 "created_at": page.created_at.isoformat(),
                 "edited_at": page.edited_at.isoformat(),
                 "author": get_page_author_response(
@@ -191,12 +189,11 @@ def get_page(request, slug: str):
         title=page.title,
         slug=page.slug,
         kind=Page.Kind(page.kind),
-        category=SlugDisplayNameSchema(
-            slug=page.category.slug, displayname=page.category.displayname
-        )
-        if page.category
-        else None,
-        parents=[parent.slug for parent in page.parents.all()],
+        categories=[
+            SlugDisplayNameSchema(slug=cat.slug, displayname=cat.displayname)
+            for cat in page.categories.all()
+        ],
+        parent=page.parent.slug if page.parent else None,
         created_at=page.created_at,
         edited_at=page.edited_at,
         content=page.content,
@@ -208,8 +205,8 @@ def get_page(request, slug: str):
 class PageCreateRequest(Schema):
     kind: Page.Kind
     title: str
-    category: str | None = None
-    parents: list[str]
+    categories: list[str]
+    parent: str | None = None
     is_anonymous: bool
 
 
@@ -272,39 +269,12 @@ def patch_to_standard_diff(patch_text: str) -> str:
     return "\n".join(formatted_lines)
 
 
-def normalise_page_parents(page: Page):
-    """
-    Make sure that a page with at least one parent has no
-    PageParent(parent=None), and that a page with no parents has exactly one.
-    Should be called after fiddling around with page parents.
-    """
-    links = PageParent.objects.filter(child=page)
-    top_level_links = links.filter(parent__isnull=True)
-
-    if links.filter(parent__isnull=False).exists():
-        top_level_links.delete()
-        return
-
-    # No parents, so it needs exactly one top-level relation. If there are
-    # multiple (there shouldn't be..., but bad code can introduce it), use the
-    # oldest one
-    kept = top_level_links.order_by("id").first()
-    if kept is None:
-        PageParent.objects.create(
-            parent=None,
-            child=page,
-            order=PageParent.objects.filter(parent=None).count(),
-        )
-    else:
-        top_level_links.exclude(id=kept.id).delete()
-
-
 def create_page_nochecks(
     title: str,
     kind: Page.Kind,
-    category: Category | None,
+    categories: list[Category],
     author: PageAuthor,
-    parents: list[Page],
+    parent: Page | None,
     is_anonymous: bool,
     slug: str | None = None,
 ) -> Page:
@@ -312,20 +282,14 @@ def create_page_nochecks(
         title=title,
         slug=create_page_slug(title if slug is None else slug),
         kind=kind,
-        category=category,
+        parent=parent,
         author=author,
         anonymised=is_anonymous,
         content="",
     )
     page.save()
 
-    for parent in parents:
-        # order is based on number of other childs
-        PageParent.objects.create(
-            parent=parent, child=page, order=parent.children.count()
-        )
-
-    normalise_page_parents(page)
+    page.categories.set(categories)
 
     content_patch = calculate_patch("", page.content)
     title_patch = calculate_patch("", page.title)
@@ -353,8 +317,8 @@ def create_page_nochecks(
 )
 @decorate_view(auth_check.supports_temp_user)
 def create_page(request, data: PageCreateRequest):
-    # Only admins can assign it a category - since they are category pages
-    if data.category and not auth_check.has_admin_rights(request):
+    # Only admins can assign categories to guide pages.
+    if data.categories and not auth_check.has_admin_rights(request):
         return not_allowed()
 
     # Only admins can create static_html pages since they can contain JS
@@ -362,29 +326,26 @@ def create_page(request, data: PageCreateRequest):
         return not_allowed()
 
     # Double check category exists
-    category = None
-    if data.category:
-        try:
-            category = Category.objects.get(slug=data.category)
-        except Category.DoesNotExist:
-            return not_possible(f"Category {data.category} does not exist")
+    categories = list(Category.objects.filter(slug__in=set(data.categories)))
+    if len(categories) != len(set(data.categories)):
+        found = {category.slug for category in categories}
+        missing = next(slug for slug in data.categories if slug not in found)
+        return not_possible(f"Category {missing} does not exist")
 
     # Double check parents exists
-    parents = []
-    if data.parents:
-        for parent_slug in data.parents:
-            try:
-                parent = Page.objects.get(slug=parent_slug)
-            except Page.DoesNotExist:
-                return not_possible(f"Parent page {parent_slug} does not exist")
-            parents.append(parent)
+    parent = None
+    if data.parent:
+        try:
+            parent = Page.objects.get(slug=data.parent)
+        except Page.DoesNotExist:
+            return not_possible(f"Parent page {data.parent} does not exist")
 
     page = create_page_nochecks(
         title=data.title,
         kind=data.kind,
-        category=category,
+        categories=categories,
         author=get_page_author(request),
-        parents=parents,
+        parent=parent,
         is_anonymous=data.is_anonymous,
     )
 
@@ -394,8 +355,8 @@ def create_page(request, data: PageCreateRequest):
 class PageUpdateRequest(Schema):
     slug: str
     title: str | None
-    category: str | None
-    parents: list[str]
+    categories: list[str]
+    parent: str | None
     content: str | None
     revision_message: str
     is_anonymous: bool
@@ -420,7 +381,7 @@ def update_page(request, slug: str, data: PageUpdateRequest):
     if (
         (
             slug != data.slug
-            or set(data.parents) != set(parent.slug for parent in page.parents.all())
+            or data.parent != (page.parent.slug if page.parent else None)
         )
         and not auth_check.has_admin_rights(request)
         and page.author != author
@@ -432,15 +393,11 @@ def update_page(request, slug: str, data: PageUpdateRequest):
         return not_allowed()
 
     # Only admins can change or assign a category - since they are category pages
-    if (
-        data.category
-        and (page.category.slug if page.category else None) != data.category
-    ):
+    new_categories = set(data.categories)
+    old_categories = set(page.categories.values_list("slug", flat=True))
+    if new_categories != old_categories:
         if not auth_check.has_admin_rights(request):
             return not_allowed()
-
-        if Page.objects.filter(category__slug=data.category).exists():
-            return not_possible("The category is associated with another page")
 
     # If None, allow keeping existing title or content
     # These are the only fields that are allowed to be partially updated -
@@ -457,48 +414,45 @@ def update_page(request, slug: str, data: PageUpdateRequest):
         slug == data.slug
         and title_patch == ""
         and content_patch == ""
-        and set(data.parents) == set(parent.slug for parent in page.parents.all())
-        and data.category == (page.category.slug if page.category else None)
+        and data.parent == (page.parent.slug if page.parent else None)
+        and new_categories == old_categories
     ):
         return not_possible("No changes detected")
 
     page.slug = data.slug
 
-    if data.category:
-        try:
-            category = Category.objects.get(slug=data.category)
-            page.category = category
-        except Category.DoesNotExist:
-            return not_possible(f"Category {data.category} does not exist")
-    else:
-        page.category = None
+    categories = list(Category.objects.filter(slug__in=new_categories))
+    if len(categories) != len(new_categories):
+        found = {category.slug for category in categories}
+        missing = next(slug for slug in data.categories if slug not in found)
+        return not_possible(f"Category {missing} does not exist")
 
     page.title = data.title
     page.content = data.content
 
     # Update parents
-    parents = []
-    for parent_slug in data.parents:
+    parent = None
+    if data.parent:
         try:
-            parent = Page.objects.get(slug=parent_slug)
-            parents.append(parent)
+            parent = Page.objects.get(slug=data.parent)
         except Page.DoesNotExist:
-            return not_possible(f"Parent page {parent_slug} does not exist")
+            return not_possible(f"Parent page {data.parent} does not exist")
 
-    if parents:
-        # Remove all existing PageParent entries for this page and add new ones
-        PageParent.objects.filter(child=page).delete()
-        for parent in parents:
-            # order is based on number of other childs
-            PageParent.objects.create(
-                parent=parent, child=page, order=parent.children.count()
-            )
-    else:
-        # Changing to top-level - only drop the parents here, so that an
-        # existing top-level relation keeps its position among its peers
-        PageParent.objects.filter(child=page, parent__isnull=False).delete()
+        if parent.pk == page.pk:
+            return not_possible("A page cannot be its own parent")
 
-    normalise_page_parents(page)
+        ancestor = parent
+        seen_ancestors = set()
+        while ancestor:
+            if ancestor.pk == page.pk:
+                return not_possible("This parent would create a page cycle")
+            if ancestor.pk in seen_ancestors:
+                return not_possible("The existing page hierarchy contains a cycle")
+            seen_ancestors.add(ancestor.pk)
+            ancestor = ancestor.parent
+
+    page.parent = parent
+    page.categories.set(categories)
 
     page.edited_at = datetime.datetime.now(datetime.UTC)
     page.save()
@@ -686,14 +640,7 @@ def delete_page(request, slug: str):
     ):
         return not_allowed()
 
-    # Get children first - needed, because we need to delete page before
-    # re-parent children to avoid 'order' potentially being off by one
-    children = list(page.children.all())
-
+    # SET_NULL makes children of this page top-level automatically.
     page.delete()
-
-    # Re-parent all former exclusive children to the root
-    for child in children:
-        normalise_page_parents(child)
 
     return 204, None

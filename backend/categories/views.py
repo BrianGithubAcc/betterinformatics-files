@@ -78,9 +78,9 @@ def add_category(request):
     create_page_nochecks(
         title=request.POST["category"],
         kind=Page.Kind.GUIDE,
-        category=cat,
+        category=[cat],
         author=get_page_author(request),
-        parents=[],
+        parents=None,
         is_anonymous=False,
         slug=slug,  # Request to use the same slug as category
     )

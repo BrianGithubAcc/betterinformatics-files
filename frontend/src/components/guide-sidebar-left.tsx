@@ -211,8 +211,9 @@ export const GuideSideBarLeft: React.FC = () => {
         continue;
       }
 
-      // We are in a cateogry page we need to get the year of the parent 
+      // The highest mapped ancestor determines the year for its whole subtree.
       const year = ancestors
+        .toReversed()
         .flatMap(ancestor => ancestor.categories)
         .map(category => yearByCategory.get(category.slug))
         .find(year => year !== undefined);

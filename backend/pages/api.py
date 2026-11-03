@@ -151,10 +151,11 @@ def list_pages(
         category_obj = get_object_or_404(Category, slug=category)
         query = query.filter(categories=category_obj)
     elif category == "":
-        query = query.filter(categories=None)
+        query = query.filter(categories__isnull=True)
 
     pages = (
-        query.select_related("author", "parent", "categories")
+        query.select_related("author", "parent")
+        .prefetch_related("categories")
         .order_by("title")
     )
 

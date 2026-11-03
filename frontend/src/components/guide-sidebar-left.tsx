@@ -3,6 +3,7 @@ import {
   Group,
   Modal,
   Select,
+  SegmentedControl,
   Stack,
   Switch,
   TextInput,
@@ -75,17 +76,25 @@ const LeafNode: React.FC<RenderTreeNodePayload> = ({
 export const GuideSideBarLeft: React.FC = () => {
   const user = useUser();
   const navigate = useNavigate();
+  const [treeMode, setTreeMode] = useState<"main" | "courses">("main");
 
-  const { data: pages, refetch: refetchPages } = useListPages({
-    category: "",
-  });
+  const { data: pages, refetch: refetchPages } = useListPages();
+
+  const visiblePages = useMemo(
+    () =>
+      pages?.pages.filter(page =>
+        treeMode === "main"
+          ? page.categories.length === 0
+          : page.categories.length > 0,
+      ) ?? [],
+    [pages, treeMode],
+  );
 
   const treeData = useMemo(() => {
-    // Build a tree structure from the flat list of pages and parents
-    if (!pages) return [];
+    // Build a tree from the flat list of pages and their single parent.
     const pageMap: Record<string, { parent: string | null } & TreeNodeData> =
       {};
-    pages.pages.forEach(page => {
+    visiblePages.forEach(page => {
       pageMap[page.slug] = {
         value: page.slug,
         label: page.title,
@@ -93,7 +102,7 @@ export const GuideSideBarLeft: React.FC = () => {
         parent: page.parent,
       };
     });
-    pages.pages.forEach(page => {
+    visiblePages.forEach(page => {
       if (!page.parent) return;
       const parentNode = pageMap[page.parent];
       if (!parentNode) return;
@@ -106,7 +115,7 @@ export const GuideSideBarLeft: React.FC = () => {
         const { parent: _parent, ...rest } = node;
         return rest;
       });
-  }, [pages]);
+  }, [visiblePages]);
 
   const [isOpen, setIsOpen] = useState(false);
   const [newPageName, setNewPageName] = useState("");
@@ -216,6 +225,16 @@ export const GuideSideBarLeft: React.FC = () => {
         top={{ base: 0, sm: "4rem" }}
         w={{ base: "100%", sm: "auto" }}
       >
+        <SegmentedControl
+          fullWidth
+          aria-label="Guide navigation"
+          value={treeMode}
+          onChange={value => setTreeMode(value as "main" | "courses")}
+          data={[
+            { label: "Main", value: "main" },
+            { label: "Courses", value: "courses" },
+          ]}
+        />
         <Tree
           data={treeData}
           renderNode={payload => <LeafNode {...payload} />}

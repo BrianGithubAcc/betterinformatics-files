@@ -6,16 +6,15 @@ import { PageArticle } from "../components/page-article";
 
 const GuidePage: React.FC = () => {
   const { slug } = useParams() as { slug?: string };
-  const { data: pages, refetch: refetchPages } = useListPages({
-    category: "",
-  });
+  const { data: pages, refetch: refetchPages } = useListPages();
+  const defaultPage = pages?.pages.find(page => page.categories.length === 0);
   const {
     data: page,
     isError,
     refetch,
-  } = useGetPage(slug ?? pages?.pages[0]?.slug ?? "", {
+  } = useGetPage(slug ?? defaultPage?.slug ?? "", {
     query: {
-      enabled: !!slug || !!pages?.pages.length,
+      enabled: !!slug || !!defaultPage,
     },
   });
   const parentPages = pages?.pages.filter(p => page?.parent === p.slug) ?? [];

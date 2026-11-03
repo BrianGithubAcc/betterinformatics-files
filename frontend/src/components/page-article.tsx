@@ -156,6 +156,7 @@ export const PageArticle: React.FC<{
       align={{ base: "stretch", sm: "flex-start" }}
       gap="xs"
       flex={1}
+      style={{ alignSelf: "stretch" }}
     >
       <Paper
         pl={{ base: 0, sm: editing ? "xs" : "lg" }}

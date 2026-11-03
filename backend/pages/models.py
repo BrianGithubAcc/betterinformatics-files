@@ -1,8 +1,6 @@
 from django.db import models
 from django.utils import timezone
 
-from categories.models import Category
-
 
 class Page(models.Model):
     class Kind(models.TextChoices):
@@ -12,14 +10,17 @@ class Page(models.Model):
     title = models.CharField(max_length=256)
     slug = models.CharField(max_length=256, unique=True)
     kind = models.CharField(max_length=16, choices=Kind.choices, default=Kind.GUIDE)
-    category: models.ForeignKey[Category | None] = models.OneToOneField(
+    categories = models.ManyToManyField(
         "categories.Category",
+        related_name="pages",
+        blank=True,
+    )
+    parent = models.ForeignKey(
+        "self",
         on_delete=models.SET_NULL,
         null=True,
-        related_name="page",
-    )
-    parents = models.ManyToManyField(
-        "self", symmetrical=False, related_name="children", through="PageParent"
+        blank=True,
+        related_name="children",
     )
     created_at = models.DateTimeField(default=timezone.now)  # creation time
     edited_at = models.DateTimeField(default=timezone.now)  # last modified time
@@ -35,22 +36,6 @@ class Page(models.Model):
     revisions: models.QuerySet["PageRevision"]
     resources: models.QuerySet["Resource"]
     children: models.QuerySet["Page"]
-
-
-class PageParent(models.Model):
-    # First foreign key is assumed to be source in a self-referential "Through"
-    # model in Django
-    child = models.ForeignKey(
-        "Page", on_delete=models.CASCADE, related_name="child_links"
-    )
-    parent = models.ForeignKey(
-        "Page",
-        on_delete=models.CASCADE,
-        related_name="parent_links",
-        # Null to allow representation of top-level pages
-        null=True,
-    )
-    order = models.IntegerField(default=0)
 
 
 class PageRevision(models.Model):

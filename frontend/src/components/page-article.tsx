@@ -64,7 +64,7 @@ export const PageArticle: React.FC<{
     },
     {
       query: {
-        select: data => data.pages.filter(p => p.category),
+        select: data => data.pages.filter(p => p.categories.length > 0),
       },
     },
   );
@@ -85,8 +85,15 @@ export const PageArticle: React.FC<{
       onSuccess: ({ slug }) => {
         // refetch to refresh sidebar
         refetch();
-        if (searchParams.get("from") === "category" && page.category) {
-          void navigate(`/category/${page.category.slug}`);
+        if (
+          searchParams.get("from") === "category" &&
+          page.categories.length > 0
+        ) {
+          const requestedCategory = searchParams.get("category");
+          const category = page.categories.find(
+            item => item.slug === requestedCategory,
+          );
+          void navigate(`/category/${(category ?? page.categories[0]).slug}`);
         } else {
           void navigate(`/guide/${slug}`);
         }
@@ -110,9 +117,9 @@ export const PageArticle: React.FC<{
         // Initial values
         content: page.content,
         title: page.title,
-        category: page.category?.slug ?? null,
+        categories: page.categories.map(category => category.slug),
         slug: page.slug,
-        parents: page.parents,
+        parent: page.parent,
         is_anonymous: false,
         revision_message: "",
       },
@@ -137,8 +144,9 @@ export const PageArticle: React.FC<{
     formState.slug !== page.slug ||
     formState.content !== page.content ||
     formState.title !== page.title ||
-    formState.category !== (page.category?.slug ?? null) ||
-    formState.parents !== page.parents;
+    JSON.stringify(formState.categories) !==
+      JSON.stringify(page.categories.map(category => category.slug)) ||
+    formState.parent !== page.parent;
 
   const [undoStack, setUndoStack] = useState<UndoStack>({ prev: [], next: [] });
 
@@ -190,15 +198,23 @@ export const PageArticle: React.FC<{
             </Anchor>
           </Group>
         )}
-        {page.category && !editing && (
-          <Anchor component={Link} to={`/category/${page.category.slug}`}>
-            <Group gap="xs" mb="md" wrap="nowrap" align="flex-start">
-              <ActionIcon variant="transparent">
-                <IconBook size={16} />
-              </ActionIcon>
-              View in Context of "{page.category.displayname}"
-            </Group>
-          </Anchor>
+        {page.categories.length > 0 && !editing && (
+          <Group gap="xs" mb="md" wrap="nowrap" align="flex-start">
+            <ActionIcon variant="transparent">
+              <IconBook size={16} />
+            </ActionIcon>
+            <Text>
+              View in Context of{" "}
+              {page.categories.map((category, index) => (
+                <React.Fragment key={category.slug}>
+                  {index > 0 && ", "}
+                  <Anchor component={Link} to={`/category/${category.slug}`}>
+                    {category.displayname}
+                  </Anchor>
+                </React.Fragment>
+              ))}
+            </Text>
+          </Group>
         )}
         {editing ? (
           page.kind === "static_html" ? (
@@ -250,17 +266,20 @@ export const PageArticle: React.FC<{
               value={formState.slug}
               onChange={e => setFormValue("slug", e.target.value)}
             />
-            <MultiSelect
-              label="Parent Pages"
+            <Select
+              label="Parent Page"
+              placeholder="No parent"
+              clearable
+              searchable
               data={pages.pages
                 .filter(p => p.slug !== page.slug)
                 .map(p => ({ value: p.slug, label: p.title }))}
-              value={formState.parents}
-              onChange={value => setFormValue("parents", value)}
+              value={formState.parent}
+              onChange={value => setFormValue("parent", value)}
             />
             {isAdmin && (
-              <Select
-                label="Associated Category"
+              <MultiSelect
+                label="Associated Categories"
                 searchable
                 data={
                   categories?.map(c => ({
@@ -268,8 +287,8 @@ export const PageArticle: React.FC<{
                     label: c.displayname,
                   })) ?? []
                 }
-                value={formState.category}
-                onChange={value => setFormValue("category", value)}
+                value={formState.categories}
+                onChange={value => setFormValue("categories", value)}
                 disabled={!!categoriesError}
                 loading={categoriesLoading}
                 error={
@@ -300,11 +319,11 @@ export const PageArticle: React.FC<{
                     component={Link}
                     to={
                       user?.loggedin
-                        ? `/category/${page.category?.slug}/guide`
+                        ? `/category/${page.categories[0]?.slug}/guide`
                         : `/guide/${page.slug}`
                     }
                   >
-                    {page.category?.displayname}
+                    {page.categories.map(c => c.displayname).join(", ")}
                   </Anchor>
                 </List.Item>
               ))}

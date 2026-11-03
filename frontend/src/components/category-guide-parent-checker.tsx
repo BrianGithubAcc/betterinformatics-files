@@ -7,7 +7,7 @@ import {
   Button,
   Group,
   LoadingOverlay,
-  MultiSelect,
+  Select,
   Table,
 } from "@mantine/core";
 import { PageListResponse, PageListResponseItem } from "../api/model";
@@ -17,32 +17,33 @@ import { Link } from "react-router-dom";
 interface CategoryParentSetButtonProps {
   page: PageListResponseItem;
   pages: PageListResponse;
-  onSubmit: (parents: string[]) => void;
+  onSubmit: (parent: string | null) => void;
 }
 const CategoryParentSetButton: React.FC<CategoryParentSetButtonProps> = ({
   page,
   onSubmit,
   pages,
 }) => {
-  const [parents, setParents] = useState<string[]>(page.parents);
+  const [parent, setParent] = useState<string | null>(null);
 
   return (
     <form
       onSubmit={e => {
         e.preventDefault();
-        onSubmit(parents);
+        onSubmit(parent);
       }}
     >
       <Group align="end">
-        <MultiSelect
+        <Select
           label="Parent Pages"
           searchable
+          clearable
           data={pages.pages
-            .filter(p => p.category === null)
+            .filter(p => p.categories.length === 0)
             .filter(p => p.slug !== page.slug)
             .map(p => ({ value: p.slug, label: p.title }))}
-          value={parents}
-          onChange={value => setParents(value)}
+          value={parent}
+          onChange={setParent}
           style={{ flex: 1 }}
         />
         <Button variant="outline" type="submit" color="dark">
@@ -89,22 +90,20 @@ export const CategoryGuideParentChecker: React.FC = () => {
     if (!categories || !pagesWithNoParents || !biData || !euclidList) return [];
 
     return pagesWithNoParents.pages
-      .map(page => {
-        const category = categories.find(c => c.slug === page.category?.slug);
-        const euclid_codes = euclidList
-          .filter(e => e.category === category?.slug)
-          .map(e => e.code);
-        const biCourse = Object.values(biData.list).find(c =>
-          euclid_codes.includes(c.euclid_code),
-        );
+      .flatMap(page =>
+        page.categories.map(pageCategory => {
+          const category = categories.find(c => c.slug === pageCategory.slug);
+          const euclid_codes = euclidList
+            .filter(e => e.category === category?.slug)
+            .map(e => e.code);
+          const biCourse = Object.values(biData.list).find(c =>
+            euclid_codes.includes(c.euclid_code),
+          );
 
-        if (!category) return null;
-        return {
-          page,
-          category,
-          biCourse,
-        };
-      })
+          if (!category) return null;
+          return { page, category, biCourse };
+        }),
+      )
       .filter(i => i !== null);
   }, [categories, pagesWithNoParents, biData, euclidList]);
 
@@ -163,13 +162,13 @@ export const CategoryGuideParentChecker: React.FC = () => {
                   <CategoryParentSetButton
                     page={page}
                     pages={pagesWithNoParents}
-                    onSubmit={parents =>
+                    onSubmit={parent =>
                       updatePage({
                         slug: page.slug,
                         data: {
                           slug: page.slug,
-                          category: page.category?.slug ?? null,
-                          parents,
+                          categories: page.categories.map(c => c.slug),
+                          parent,
                           revision_message: "Set parent page",
                           is_anonymous: false,
                           title: null,

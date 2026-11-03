@@ -14,6 +14,7 @@ import {
   Paper,
 } from "@mantine/core";
 import React, { useCallback, useMemo } from "react";
+import { useQueries } from "@tanstack/react-query";
 import {
   Link,
   Navigate,
@@ -47,7 +48,7 @@ import { useCategoryTabs } from "../hooks/useCategoryTabs";
 import CategoryStatsComponent from "../components/category-stats";
 import { useQuickSearchFilter } from "../components/Navbar/QuickSearch/QuickSearchFilterContext";
 import { loadTestimonialsByCourse } from "../api/testimonials";
-import { useGetPage, useListPages } from "../api/hooks/pages";
+import { getGetPageQueryOptions, useListPages } from "../api/hooks/pages";
 import { CategoryResources } from "../components/category-resources";
 import { CategoryTestimonials } from "../components/category-testimonials";
 import { CategoryGuide } from "../components/category-guide";
@@ -136,14 +137,15 @@ const CategoryPageContent: React.FC<CategoryPageContentProps> = ({
   const { data: pages } = useListPages({
     category: metaData.slug,
   });
-  const { data: page, isError: pageIsError } = useGetPage(
-    pages?.pages[0]?.slug ?? "",
-    {
-      query: {
-        enabled: !!pages?.pages.length,
-      },
-    },
+  const guidePageQueries = useQueries({
+    queries: (pages?.pages ?? []).map(page =>
+      getGetPageQueryOptions(page.slug),
+    ),
+  });
+  const guidePages = guidePageQueries.flatMap(query =>
+    query.data ? [query.data] : [],
   );
+  const pageIsError = guidePageQueries.some(query => query.isError);
 
   const sessionString = bi_courses_data
     ? bi_courses_data.session.replace("-", "/")
@@ -305,7 +307,10 @@ const CategoryPageContent: React.FC<CategoryPageContentProps> = ({
                       p={{ base: "sm", sm: "md" }}
                       pos="relative"
                     >
-                      <CategoryGuide page={page} />
+                      <CategoryGuide
+                        pages={guidePages}
+                        categorySlug={metaData.slug}
+                      />
                     </Paper>
                   ) : null}
                 </Grid.Col>

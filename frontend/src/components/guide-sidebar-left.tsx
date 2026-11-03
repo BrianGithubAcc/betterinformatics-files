@@ -2,7 +2,7 @@ import {
   Button,
   Group,
   Modal,
-  MultiSelect,
+  Select,
   Stack,
   Switch,
   TextInput,
@@ -83,38 +83,34 @@ export const GuideSideBarLeft: React.FC = () => {
   const treeData = useMemo(() => {
     // Build a tree structure from the flat list of pages and parents
     if (!pages) return [];
-    const pageMap: Record<string, { parents: string[] } & TreeNodeData> = {};
+    const pageMap: Record<string, { parent: string | null } & TreeNodeData> =
+      {};
     pages.pages.forEach(page => {
       pageMap[page.slug] = {
         value: page.slug,
         label: page.title,
         children: undefined,
-        parents: page.parents,
+        parent: page.parent,
       };
     });
     pages.pages.forEach(page => {
-      if (page.parents.length > 0) {
-        for (const parentSlug of page.parents) {
-          if (!Object.hasOwn(pageMap, parentSlug)) continue;
-          pageMap[parentSlug].children ??= [];
-          pageMap[parentSlug].children.push(pageMap[page.slug]);
-        }
-      }
+      if (!page.parent) return;
+      const parentNode = pageMap[page.parent];
+      if (!parentNode) return;
+      parentNode.children ??= [];
+      parentNode.children.push(pageMap[page.slug]);
     });
     return Object.values(pageMap)
-      .filter(
-        node =>
-          !node.parents.some(parentSlug => Object.hasOwn(pageMap, parentSlug)),
-      )
+      .filter(node => !node.parent || !Object.hasOwn(pageMap, node.parent))
       .map(node => {
-        const { parents, ...rest } = node;
+        const { parent: _parent, ...rest } = node;
         return rest;
       });
   }, [pages]);
 
   const [isOpen, setIsOpen] = useState(false);
   const [newPageName, setNewPageName] = useState("");
-  const [newPageParents, setNewPageParents] = useState<string[]>([]);
+  const [newPageParent, setNewPageParent] = useState<string | null>(null);
   const [newPageKind, setNewPageKind] = useState<Kind>("guide");
   const [newPageAnonymous, setNewPageAnonymous] = useState(false);
 
@@ -129,7 +125,7 @@ export const GuideSideBarLeft: React.FC = () => {
       onSuccess(data) {
         setIsOpen(false);
         setNewPageName("");
-        setNewPageParents([]);
+        setNewPageParent(null);
         setNewPageAnonymous(false);
         void refetchPages();
         void navigate(`/guide/${data.slug}`);
@@ -157,13 +153,14 @@ export const GuideSideBarLeft: React.FC = () => {
             value={newPageName}
             onChange={e => setNewPageName(e.currentTarget.value)}
           />
-          <MultiSelect
-            label="Parents"
-            placeholder="Select (optional) parent pages"
-            data={pages?.pages.map(p => ({ value: p.slug, label: p.title }))}
-            value={newPageParents}
-            onChange={setNewPageParents}
+          <Select
+            label="Parent Page"
+            placeholder="No parent"
+            clearable
             searchable
+            data={pages?.pages.map(p => ({ value: p.slug, label: p.title }))}
+            value={newPageParent}
+            onChange={setNewPageParent}
           />
           <Group justify="space-between">
             <Switch
@@ -190,8 +187,8 @@ export const GuideSideBarLeft: React.FC = () => {
                 data: {
                   kind: newPageKind,
                   title: newPageName,
-                  parents: newPageParents,
-                  category: null,
+                  parent: newPageParent,
+                  categories: [],
                   is_anonymous: newPageAnonymous,
                 },
               })

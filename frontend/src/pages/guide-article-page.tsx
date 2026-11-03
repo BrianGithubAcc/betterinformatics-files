@@ -18,8 +18,7 @@ const GuidePage: React.FC = () => {
       enabled: !!slug || !!pages?.pages.length,
     },
   });
-  const parentPages =
-    pages?.pages.filter(p => page?.parents.includes(p.slug)) ?? [];
+  const parentPages = pages?.pages.filter(p => page?.parent === p.slug) ?? [];
 
   const navigate = useNavigate();
 
